@@ -7,13 +7,12 @@
 #include <cglm/struct.h>
 #include "shader.h"
 
-#define NO_OF_BOIDS 200
+#define NO_OF_BOIDS 800
 
-int scr_width = 800;
-int scr_height = 600;
+int scr_width = 1280;
+int scr_height = 720;
 
 float boid_size = 20.0f;
-float boid_speed = 1.0f;
 
 float protected_range = 8.0f;
 float visible_range = 40.0f;
@@ -27,10 +26,10 @@ float max_bias = 0.01f;
 float bias_increment = 0.00004f;
 
 enum Group {
-	TOP = 0,
-	BOTTOM,
+	RIGHT = 0,
 	LEFT,
-	RIGHT
+	BOTTOM,
+	TOP,
 };
 
 struct Boid {
@@ -102,11 +101,6 @@ int main(int argc, char **argv) {
 
 	for (int i = 0; i < NO_OF_BOIDS; i++) {
 		struct Boid *boid = &boids[i];
-		boid->pos.x = (scr_width/2.0f) - (boid_size/2.0f);
-		boid->pos.x += (((rand()/(float)RAND_MAX) * 2) - 1) * visible_range;
-		boid->pos.y = (scr_height/2.0f) - (boid_size/2.0f);
-		boid->pos.y += (((rand()/(float)RAND_MAX) * 2) - 1) * visible_range;
-
 		boid->bias = 0.001;
 		boid->group = i % 4;
 	}
@@ -126,13 +120,9 @@ int main(int argc, char **argv) {
 				if (distance < visible_range) {
 					if (distance < protected_range) {
 						close_d = glms_vec3_add(close_d, glms_vec3_sub(boid->pos, boid_o->pos));
-						close_d.x += boid->pos.x - boid_o->pos.x;
-						close_d.y += boid->pos.y - boid_o->pos.y;
 					} else {
-						avg_pos.x += boid_o->pos.x;
-						avg_pos.y += boid_o->pos.y;
-						avg_vel.x += boid_o->vel.x;
-						avg_vel.y += boid_o->vel.y;
+						avg_pos = glms_vec3_add(avg_pos, boid_o->pos);
+						avg_vel = glms_vec3_add(avg_vel, boid_o->vel);
 
 						visible_count++;
 					}
@@ -140,17 +130,13 @@ int main(int argc, char **argv) {
 			}
 
 			if (visible_count > 0) {
-				avg_pos.x /= visible_count;
-				avg_pos.y /= visible_count;
-				avg_vel.x /= visible_count;
-				avg_vel.y /= visible_count;
+				avg_pos = glms_vec3_divs(avg_pos, visible_count);
+				avg_vel = glms_vec3_divs(avg_vel, visible_count);
 
-				boid->vel.x += (avg_pos.x - boid->pos.x)*centering_fct + (avg_vel.x - boid->vel.x)*matching_fct;
-				boid->vel.y += (avg_pos.y - boid->pos.y)*centering_fct + (avg_vel.y - boid->vel.y)*matching_fct;
+				boid->vel = glms_vec3_add(boid->vel, glms_vec3_add(glms_vec3_scale(glms_vec3_sub(avg_pos, boid->pos), centering_fct), glms_vec3_scale(glms_vec3_sub(avg_vel, boid->vel), matching_fct)));
 			}
 
-			boid->vel.x += close_d.x*avoid_fct;
-			boid->vel.y += close_d.y*avoid_fct;
+			boid->vel = glms_vec3_add(boid->vel, glms_vec3_scale(close_d, avoid_fct));
 
 			if (boid->pos.y < 100) {
 				boid->vel.y += turn_fct;
@@ -164,8 +150,8 @@ int main(int argc, char **argv) {
 				boid->vel.x -= turn_fct;
 			}
 
-			if (boid->group == 0) {
-				if (boid->vel.x > RIGHT) {
+			if (boid->group == RIGHT) {
+				if (boid->vel.x > 0) {
 					boid->bias = glm_min(max_bias, boid->bias + bias_increment);
 				} else {
 					boid->bias = glm_max(bias_increment, boid->bias - bias_increment);
@@ -200,18 +186,15 @@ int main(int argc, char **argv) {
 				boid->vel.y = (1 - boid->bias)*boid->vel.y + (boid->bias * -1);
 			}
 
-			float speed = sqrt(boid->vel.x*boid->vel.x + boid->vel.y*boid->vel.y);
+			float speed = glms_vec3_distance((vec3s){0}, boid->vel);
 
 			if (speed < min_speed) {
-				boid->vel.x = (boid->vel.x/speed)*min_speed;
-				boid->vel.y = (boid->vel.y/speed)*min_speed;
+				boid->vel = glms_vec3_scale(glms_vec3_divs(boid->vel, speed), min_speed);
 			} else if (speed > max_speed) {
-				boid->vel.x = (boid->vel.x/speed)*max_speed;
-				boid->vel.y = (boid->vel.y/speed)*max_speed;
+				boid->vel = glms_vec3_scale(glms_vec3_divs(boid->vel, speed), max_speed);
 			}
 
-			boid->pos.x = boid->pos.x + boid->vel.x;
-			boid->pos.y = boid->pos.y + boid->vel.y;
+			boid->pos = glms_vec3_add(boid->pos, boid->vel);
 		}
 
 		glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
@@ -236,13 +219,13 @@ int main(int argc, char **argv) {
 			glm_rotate(model, atan2(normed_vel[1], normed_vel[0]) + glm_rad(90), (vec3){0.0f, 0.0f, 1.0f});
 			shader_set_mat4(shader_pg, "model", model);
 
-			if (boid->group == TOP) {
+			if (boid->group == RIGHT) {
 				shader_set_vec4(shader_pg, "color", (vec4){1.0f, 1.0f, 0.0f, 1.0f});
-			} else if (boid->group == BOTTOM) {
-				shader_set_vec4(shader_pg, "color", (vec4){0.0f, 1.0f, 1.0f, 1.0f});
 			} else if (boid->group == LEFT) {
+				shader_set_vec4(shader_pg, "color", (vec4){0.0f, 1.0f, 1.0f, 1.0f});
+			} else if (boid->group == BOTTOM) {
 				shader_set_vec4(shader_pg, "color", (vec4){0.0f, 1.0f, 0.0f, 1.0f});
-			} else if (boid->group == RIGHT) {
+			} else if (boid->group == TOP) {
 				shader_set_vec4(shader_pg, "color", (vec4){1.0f, 0.0f, 0.0f, 1.0f});
 			}
 
