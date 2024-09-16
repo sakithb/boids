@@ -6,13 +6,14 @@
 #include <GLFW/glfw3.h>
 #include <cglm/struct.h>
 #include "nuklear.h"
+#include "quadtree.h"
 #include "shader.h"
 
 int scr_width = 1280;
 int scr_height = 720;
 
 float boid_size = 20.0f;
-int boid_count = 500;
+int boid_count = 5000;
 
 float protected_range = 8.0f;
 float visible_range = 40.0f;
@@ -52,6 +53,59 @@ void key_callback(GLFWwindow* window, int key, int scancode, int action, int mod
 	}
 }
 
+void init_boids(struct Boid **boids, GLuint *boid_vao, GLuint *model_vbo, GLuint *color_vbo) {
+	*boids = calloc(boid_count, sizeof(struct Boid));
+	if (boids == NULL) {
+		fprintf(stderr, "Error while allocating memory");
+		abort();
+	}
+
+	glBindVertexArray(*boid_vao);
+	glBindBuffer(GL_ARRAY_BUFFER, *model_vbo);
+	glBufferData(GL_ARRAY_BUFFER, boid_count * sizeof(mat4), NULL, GL_DYNAMIC_DRAW);
+
+	glEnableVertexAttribArray(1);
+	glEnableVertexAttribArray(2);
+	glEnableVertexAttribArray(3);
+	glEnableVertexAttribArray(4);
+	glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, sizeof(mat4), (void*)0);
+	glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, sizeof(mat4), (void*)(sizeof(float) * 4));
+	glVertexAttribPointer(3, 4, GL_FLOAT, GL_FALSE, sizeof(mat4), (void*)(sizeof(float) * 8));
+	glVertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, sizeof(mat4), (void*)(sizeof(float) * 12));
+	glVertexAttribDivisor(1, 1);
+	glVertexAttribDivisor(2, 1);
+	glVertexAttribDivisor(3, 1);
+	glVertexAttribDivisor(4, 1);
+
+	glBindBuffer(GL_ARRAY_BUFFER, *color_vbo);
+	glBufferData(GL_ARRAY_BUFFER, boid_count * sizeof(vec4), NULL, GL_STATIC_DRAW);
+
+	for (int i = 0; i < boid_count; i++) {
+		struct Boid *boid = &(*boids)[i];
+		boid->bias = 0.001;
+		boid->group = i % 4;
+
+		if (boid->group == RIGHT) {
+			glBufferSubData(GL_ARRAY_BUFFER, i * sizeof(vec4), sizeof(vec4), (vec4){0.0f, 1.0f, 1.0f, 1.0f});
+		} else if (boid->group == LEFT) {
+			glBufferSubData(GL_ARRAY_BUFFER, i * sizeof(vec4), sizeof(vec4), (vec4){1.0f, 0.0f, 1.0f, 1.0f});
+		} else if (boid->group == BOTTOM) {
+			glBufferSubData(GL_ARRAY_BUFFER, i * sizeof(vec4), sizeof(vec4), (vec4){1.0f, 1.0f, 0.0f, 1.0f});
+		} else if (boid->group == TOP) {
+			glBufferSubData(GL_ARRAY_BUFFER, i * sizeof(vec4), sizeof(vec4), (vec4){1.0f, 0.5f, 0.0f, 1.0f});
+		}
+
+		boid->pos.x = (scr_width / 2.0f) - (boid_size / 2);
+		boid->pos.x -= visible_range * ((((float)rand() / RAND_MAX) * 2.0f) - 1.0f);
+		boid->pos.y = (scr_height / 2.0f) - (boid_size / 2);
+		boid->pos.y -= visible_range * ((((float)rand() / RAND_MAX) * 2.0f) - 1.0f);
+	}
+
+	glEnableVertexAttribArray(5);
+	glVertexAttribPointer(5, 4, GL_FLOAT, GL_FALSE, sizeof(vec4), (void*)0);
+	glVertexAttribDivisor(5, 1);
+}
+
 int main(int argc, char **argv) {
 	if (!glfwInit()) {
 		fprintf(stderr, "failed to initialize glfw");
@@ -61,7 +115,6 @@ int main(int argc, char **argv) {
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
 	glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-	glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
 	GLFWwindow* window = glfwCreateWindow(scr_width, scr_height, "Conway's game of life", NULL, NULL);
 	if (!window) {
 		fprintf(stderr, "failed to create window");
@@ -72,6 +125,8 @@ int main(int argc, char **argv) {
 	gladLoadGL(glfwGetProcAddress);
 
 	glViewport(0, 0, scr_width, scr_height);
+	glEnable(GL_DEPTH_TEST);
+	glEnable(GL_CULL_FACE);  
 
 	glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
 	glfwSetKeyCallback(window, key_callback);
@@ -85,12 +140,14 @@ int main(int argc, char **argv) {
 		1.0f, 1.0f,
 	};
 
-	GLuint boid_vao, boid_vbo;
-	glGenBuffers(1, &boid_vbo);
+	GLuint boid_vao, vert_vbo, model_vbo, color_vbo;
+	glGenBuffers(1, &vert_vbo);
+	glGenBuffers(1, &model_vbo);
+	glGenBuffers(1, &color_vbo);
 	glGenVertexArrays(1, &boid_vao);
 
 	glBindVertexArray(boid_vao);
-	glBindBuffer(GL_ARRAY_BUFFER, boid_vbo);
+	glBindBuffer(GL_ARRAY_BUFFER, vert_vbo);
 	glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
 	glEnableVertexAttribArray(0);
 	glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
@@ -100,34 +157,50 @@ int main(int argc, char **argv) {
 	nk_glfw3_font_stash_begin(&atlas);
 	nk_glfw3_font_stash_end();
 
-	struct Boid *boids = calloc(boid_count, sizeof(struct Boid));
-	if (boids == NULL) {
-		fprintf(stderr, "Error while allocating memory");
-		abort();
-	}
-
 	srand(time(NULL));
+	struct Boid *boids;
+	init_boids(&boids, &boid_vao, &model_vbo, &color_vbo);
 
-	for (int i = 0; i < boid_count; i++) {
-		struct Boid *boid = &boids[i];
-		boid->bias = 0.001;
-		boid->group = i % 4;
-	}
+	qt_pool_init(boid_count);
 
 	while(!glfwWindowShouldClose(window)) {
+		struct Quad *root = qt_pool_get(true);
+		quad_init(root, 0, 0, scr_width, scr_height, 0);
+
+		for (int i = 0; i < boid_count; i++) {
+			struct Boid *boid = &boids[i];
+
+			float x = glm_max(0, boid->pos.x);
+			float y = glm_max(0, boid->pos.y);
+
+			x = glm_min(x, scr_width - 1);
+			y = glm_min(y, scr_height - 1);
+
+			struct Quad *q = quad_search(root, x, y);
+			quad_insert(q, boid, x, y);
+		}
+
 		for (int i = 0; i < boid_count; i++) {
 			struct Boid *boid = &boids[i];
 
 			vec3s avg_pos = {0}, avg_vel = {0}, close_d = {0};
+
+			float x = glm_max(0, boid->pos.x);
+			float y = glm_max(0, boid->pos.y);
+
+			x = glm_min(x, scr_width - 1);
+			y = glm_min(y, scr_height - 1);
+
+			struct Quad* q = quad_search(root, x, y);
 			int visible_count = 0;
 
-			for (int j = 0; j < boid_count; j++) {
-				struct Boid *boid_o = &boids[j];
+			for (int j = 0; j < q->items_len; j++) {
+				struct Boid *boid_o = q->items[j].item;
 
-				float distance = fabsf(glms_vec3_distance(boid->pos, boid_o->pos));
+				float distance = fabsf(glms_vec3_distance2(boid->pos, boid_o->pos));
 
-				if (distance < visible_range) {
-					if (distance < protected_range) {
+				if (distance < visible_range * visible_range) {
+					if (distance < protected_range * protected_range) {
 						close_d = glms_vec3_add(close_d, glms_vec3_sub(boid->pos, boid_o->pos));
 					} else {
 						avg_pos = glms_vec3_add(avg_pos, boid_o->pos);
@@ -224,19 +297,12 @@ int main(int argc, char **argv) {
 			int new_boid_count = nk_propertyi(ctx, "No. of boids", 10, boid_count, 1000000, 10, 5);
 			if (new_boid_count != boid_count) {
 				boid_count = new_boid_count;
+
 				free(boids);
+				init_boids(&boids, &boid_vao, &model_vbo, &color_vbo);
 
-				boids = calloc(boid_count, sizeof(struct Boid));
-				if (boids == NULL) {
-					fprintf(stderr, "Error while reallocating memory");
-					abort();
-				}
-
-				for (int i = 0; i < boid_count; i++) {
-					struct Boid *boid = &boids[i];
-					boid->bias = 0.001;
-					boid->group = i % 4;
-				}
+				qt_pool_free();
+				qt_pool_init(boid_count);
 
 				nk_end(ctx);
 				nk_glfw3_render(NK_ANTI_ALIASING_ON);
@@ -251,6 +317,7 @@ int main(int argc, char **argv) {
 
 		glUseProgram(shader_pg);
 		glBindVertexArray(boid_vao);
+		glBindBuffer(GL_ARRAY_BUFFER, model_vbo);
 
 		mat4 model, projection;
 		glm_ortho(0.0f, scr_width, scr_height, 0.0f, -1.0f, 1.0f, projection);
@@ -266,20 +333,10 @@ int main(int argc, char **argv) {
 			glm_translate(model, boid->pos.raw);
 			glm_scale(model, (vec3){boid_size, boid_size, 0.0f});
 			glm_rotate(model, atan2(normed_vel[1], normed_vel[0]) + glm_rad(90), (vec3){0.0f, 0.0f, 1.0f});
-			shader_set_mat4(shader_pg, "model", model);
-
-			if (boid->group == RIGHT) {
-				shader_set_vec4(shader_pg, "color", (vec4){1.0f, 1.0f, 0.0f, 1.0f});
-			} else if (boid->group == LEFT) {
-				shader_set_vec4(shader_pg, "color", (vec4){0.0f, 1.0f, 1.0f, 1.0f});
-			} else if (boid->group == BOTTOM) {
-				shader_set_vec4(shader_pg, "color", (vec4){0.0f, 1.0f, 0.0f, 1.0f});
-			} else if (boid->group == TOP) {
-				shader_set_vec4(shader_pg, "color", (vec4){1.0f, 0.0f, 0.0f, 1.0f});
-			}
-
-			glDrawArrays(GL_TRIANGLES, 0, 3);
+			glBufferSubData(GL_ARRAY_BUFFER, i * sizeof(mat4), sizeof(mat4), model);
 		}
+
+		glDrawArraysInstanced(GL_TRIANGLES, 0, 3, boid_count);
 
 		nk_glfw3_render(NK_ANTI_ALIASING_ON);
 
@@ -288,8 +345,11 @@ int main(int argc, char **argv) {
 	}
 
 	free(boids);
+	qt_pool_free();
 
-	glDeleteBuffers(1, &boid_vbo);
+	glDeleteBuffers(1, &vert_vbo);
+	glDeleteBuffers(1, &model_vbo);
+	glDeleteBuffers(1, &color_vbo);
 	glDeleteVertexArrays(1, &boid_vao);
 	glDeleteProgram(shader_pg);
 	nk_glfw3_shutdown();
