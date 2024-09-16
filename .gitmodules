@@ -1,0 +1,12 @@
+[submodule "vendor/glfw"]
+	path = vendor/glfw
+	url = git@github.com:glfw/glfw.git
+[submodule "vendor/glad"]
+	path = vendor/glad
+	url = git@github.com:Dav1dde/glad.git
+[submodule "vendor/cglm"]
+	path = vendor/cglm
+	url = git@github.com:recp/cglm.git
+[submodule "vendor/cgltf"]
+	path = vendor/cgltf
+	url = git@github.com:jkuhlmann/cgltf.git
