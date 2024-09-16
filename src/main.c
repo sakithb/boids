@@ -5,20 +5,20 @@
 #include <glad/gl.h>
 #include <GLFW/glfw3.h>
 #include <cglm/struct.h>
+#include "nuklear.h"
 #include "shader.h"
-
-#define NO_OF_BOIDS 800
 
 int scr_width = 1280;
 int scr_height = 720;
 
 float boid_size = 20.0f;
+int boid_count = 500;
 
 float protected_range = 8.0f;
 float visible_range = 40.0f;
-float avoid_fct = 0.05f;
-float matching_fct = 0.05f;
-float centering_fct = 0.0005f;
+float seperation_fct = 0.05f;
+float alignment_fct = 0.05f;
+float cohesion_fct = 0.0005f;
 float turn_fct = 0.2f;
 float max_speed = 6.0f;
 float min_speed = 3.0f;
@@ -95,24 +95,33 @@ int main(int argc, char **argv) {
 	glEnableVertexAttribArray(0);
 	glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
 
-	struct Boid *boids = calloc(NO_OF_BOIDS, sizeof(struct Boid));
+	struct nk_context *ctx = nk_glfw3_init(window, NK_GLFW3_INSTALL_CALLBACKS, 512 * 1024, 128 * 1024);
+	struct nk_font_atlas *atlas;
+	nk_glfw3_font_stash_begin(&atlas);
+	nk_glfw3_font_stash_end();
+
+	struct Boid *boids = calloc(boid_count, sizeof(struct Boid));
+	if (boids == NULL) {
+		fprintf(stderr, "Error while allocating memory");
+		abort();
+	}
 
 	srand(time(NULL));
 
-	for (int i = 0; i < NO_OF_BOIDS; i++) {
+	for (int i = 0; i < boid_count; i++) {
 		struct Boid *boid = &boids[i];
 		boid->bias = 0.001;
 		boid->group = i % 4;
 	}
 
 	while(!glfwWindowShouldClose(window)) {
-		for (int i = 0; i < NO_OF_BOIDS; i++) {
+		for (int i = 0; i < boid_count; i++) {
 			struct Boid *boid = &boids[i];
 
 			vec3s avg_pos = {0}, avg_vel = {0}, close_d = {0};
 			int visible_count = 0;
 
-			for (int j = 0; j < NO_OF_BOIDS; j++) {
+			for (int j = 0; j < boid_count; j++) {
 				struct Boid *boid_o = &boids[j];
 
 				float distance = fabsf(glms_vec3_distance(boid->pos, boid_o->pos));
@@ -133,10 +142,10 @@ int main(int argc, char **argv) {
 				avg_pos = glms_vec3_divs(avg_pos, visible_count);
 				avg_vel = glms_vec3_divs(avg_vel, visible_count);
 
-				boid->vel = glms_vec3_add(boid->vel, glms_vec3_add(glms_vec3_scale(glms_vec3_sub(avg_pos, boid->pos), centering_fct), glms_vec3_scale(glms_vec3_sub(avg_vel, boid->vel), matching_fct)));
+				boid->vel = glms_vec3_add(boid->vel, glms_vec3_add(glms_vec3_scale(glms_vec3_sub(avg_pos, boid->pos), cohesion_fct), glms_vec3_scale(glms_vec3_sub(avg_vel, boid->vel), alignment_fct)));
 			}
 
-			boid->vel = glms_vec3_add(boid->vel, glms_vec3_scale(close_d, avoid_fct));
+			boid->vel = glms_vec3_add(boid->vel, glms_vec3_scale(close_d, seperation_fct));
 
 			if (boid->pos.y < 100) {
 				boid->vel.y += turn_fct;
@@ -197,6 +206,46 @@ int main(int argc, char **argv) {
 			boid->pos = glms_vec3_add(boid->pos, boid->vel);
 		}
 
+		nk_glfw3_new_frame();
+
+		if (nk_begin(ctx, "Options", nk_rect(0, 0, 250, scr_height), NK_WINDOW_DYNAMIC|NK_WINDOW_MOVABLE|NK_WINDOW_MINIMIZABLE)) {
+			nk_layout_row_dynamic(ctx, 0, 1);
+			nk_property_float(ctx, "Protected range", 0.0f, &protected_range, 100.0f, 1.0f, 0.5f);
+			nk_property_float(ctx, "Visible range", 0.0f, &visible_range, 100.0f, 1.0f, 0.5f);
+			nk_property_float(ctx, "Seperation factor", 0.0f, &seperation_fct, 1.0f, 0.01f, 0.005f);
+			nk_property_float(ctx, "Alignment factor", 0.0f, &alignment_fct, 1.0f, 0.01f, 0.005f);
+			nk_property_float(ctx, "Cohesion factor", 0.0f, &cohesion_fct, 1.0f, 0.0001f, 0.00005f);
+			nk_property_float(ctx, "Turn factor", 0.0f, &turn_fct, 1.0f, 0.1f, 0.05f);
+			nk_property_float(ctx, "Max speed", 0.0f, &max_speed, 100.0f, 1.0f, 0.5f);
+			nk_property_float(ctx, "Min speed", 0.0f, &min_speed, 100.0f, 1.0f, 0.5f);
+			nk_property_float(ctx, "Max bias", 0.0f, &max_bias, 1.0f, 0.01f, 0.005f);
+			nk_property_float(ctx, "Bias increment", 0.0f, &bias_increment, 1.0f, 0.00001f, 0.000005f);
+
+			int new_boid_count = nk_propertyi(ctx, "No. of boids", 10, boid_count, 1000000, 10, 5);
+			if (new_boid_count != boid_count) {
+				boid_count = new_boid_count;
+				free(boids);
+
+				boids = calloc(boid_count, sizeof(struct Boid));
+				if (boids == NULL) {
+					fprintf(stderr, "Error while reallocating memory");
+					abort();
+				}
+
+				for (int i = 0; i < boid_count; i++) {
+					struct Boid *boid = &boids[i];
+					boid->bias = 0.001;
+					boid->group = i % 4;
+				}
+
+				nk_end(ctx);
+				nk_glfw3_render(NK_ANTI_ALIASING_ON);
+				continue;
+			}
+		}
+
+		nk_end(ctx);
+
 		glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
 		glClear(GL_COLOR_BUFFER_BIT);
 
@@ -207,7 +256,7 @@ int main(int argc, char **argv) {
 		glm_ortho(0.0f, scr_width, scr_height, 0.0f, -1.0f, 1.0f, projection);
 		shader_set_mat4(shader_pg, "projection", projection);
 
-		for (int i = 0; i < NO_OF_BOIDS; i++) {
+		for (int i = 0; i < boid_count; i++) {
 			struct Boid *boid = &boids[i];
 
 			vec3 normed_vel;
@@ -232,6 +281,8 @@ int main(int argc, char **argv) {
 			glDrawArrays(GL_TRIANGLES, 0, 3);
 		}
 
+		nk_glfw3_render(NK_ANTI_ALIASING_ON);
+
 		glfwSwapBuffers(window);
 		glfwPollEvents();
 	}
@@ -241,6 +292,7 @@ int main(int argc, char **argv) {
 	glDeleteBuffers(1, &boid_vbo);
 	glDeleteVertexArrays(1, &boid_vao);
 	glDeleteProgram(shader_pg);
+	nk_glfw3_shutdown();
 	glfwTerminate();
 
 	return 0;
