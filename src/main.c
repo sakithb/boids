@@ -96,9 +96,9 @@ void init_boids(struct Boid **boids, GLuint *boid_vao, GLuint *model_vbo, GLuint
 		}
 
 		boid->pos.x = (scr_width / 2.0f) - (boid_size / 2);
-		boid->pos.x -= visible_range * ((((float)rand() / RAND_MAX) * 2.0f) - 1.0f);
+		boid->pos.x += 100 * ((((float)rand() / RAND_MAX) * 2.0f) - 1.0f);
 		boid->pos.y = (scr_height / 2.0f) - (boid_size / 2);
-		boid->pos.y -= visible_range * ((((float)rand() / RAND_MAX) * 2.0f) - 1.0f);
+		boid->pos.y += 100 * ((((float)rand() / RAND_MAX) * 2.0f) - 1.0f);
 	}
 
 	glEnableVertexAttribArray(5);
