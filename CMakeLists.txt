@@ -10,7 +10,6 @@ target_link_libraries(${PROJECT_NAME} PUBLIC
 	glad
 	glfw
 	cglm_headers
-	cgltf
 	m
 )
 
@@ -24,8 +23,4 @@ add_subdirectory("${PROJECT_SOURCE_DIR}/vendor/glfw/" EXCLUDE_FROM_ALL)
 
 # GLM
 add_subdirectory(${PROJECT_SOURCE_DIR}/vendor/cglm/ EXCLUDE_FROM_ALL)
-
-# GLTF
-add_library(cgltf INTERFACE)
-target_include_directories(cgltf INTERFACE ${PROJECT_SOURCE_DIR}/vendor/cgltf)
 
